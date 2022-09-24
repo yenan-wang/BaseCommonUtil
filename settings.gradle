@@ -1,0 +1,3 @@
+rootProject.name = "BaseCommonUtil"
+include ':app'
+include ':common'

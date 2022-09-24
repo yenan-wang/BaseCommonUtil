@@ -1,0 +1,6 @@
+apply from: "${rootProject.projectDir}/template_gradle/template.gradle"
+
+dependencies {
+    implementation deps.glide
+    implementation deps.glide_webp
+}

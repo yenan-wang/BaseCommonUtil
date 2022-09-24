@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<metadata>
+  <groupId>com.ngb.wyn.base_util</groupId>
+  <artifactId>common</artifactId>
+  <versioning>
+    <latest>0.0.1-LOCAL</latest>
+    <release>0.0.1-LOCAL</release>
+    <versions>
+      <version>0.0.1-LOCAL</version>
+    </versions>
+    <lastUpdated>20220924094408</lastUpdated>
+  </versioning>
+</metadata>

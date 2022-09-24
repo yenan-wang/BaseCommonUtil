@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <declare-styleable name="CommonButton">
+        <attr name="scaleX" format="float" />
+        <attr name="scaleY" format="float" />
+        <attr name="duration" format="integer" />
+
+    </declare-styleable>
+
+    <declare-styleable name="CircleCountBar">
+        <attr name="CCBSolidColor" format="color"/>
+        <attr name="CCBStrokeColor" format="color"/>
+        <attr name="CCBStrokeWidth" format="dimension"/>
+        <attr name="CCBRadius" format="dimension"/>
+        <attr name="CCBSmallSolidColor" format="color"/>
+        <attr name="CCBSmallStrokeColor" format="color"/>
+        <attr name="CCBSmallStrokeWidth" format="dimension"/>
+        <attr name="CCBSmallRadius" format="dimension"/>
+        <attr name="CCBProcessColor" format="color"/>
+        <attr name="CCBProcessWidth" format="dimension"/>
+        <attr name="CCBTextColor" format="color"/>
+        <attr name="CCBTextSize" format="dimension"/>
+    </declare-styleable>
+
+    <declare-styleable name="HorizontalProgressBar">
+        <attr name="HPBBackgroundColor" format="color"/>
+        <attr name="HPBProgressColor" format="color"/>
+        <attr name="HPBTextColor" format="color"/>
+    </declare-styleable>
+</resources>
