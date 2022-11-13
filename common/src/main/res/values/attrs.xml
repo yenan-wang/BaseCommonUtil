@@ -8,23 +8,41 @@
     </declare-styleable>
 
     <declare-styleable name="CircleCountBar">
-        <attr name="CCBSolidColor" format="color"/>
-        <attr name="CCBStrokeColor" format="color"/>
-        <attr name="CCBStrokeWidth" format="dimension"/>
-        <attr name="CCBRadius" format="dimension"/>
-        <attr name="CCBSmallSolidColor" format="color"/>
-        <attr name="CCBSmallStrokeColor" format="color"/>
-        <attr name="CCBSmallStrokeWidth" format="dimension"/>
-        <attr name="CCBSmallRadius" format="dimension"/>
-        <attr name="CCBProcessColor" format="color"/>
-        <attr name="CCBProcessWidth" format="dimension"/>
-        <attr name="CCBTextColor" format="color"/>
-        <attr name="CCBTextSize" format="dimension"/>
+        <attr name="CCBSolidColor" format="color" />
+        <attr name="CCBStrokeColor" format="color" />
+        <attr name="CCBStrokeWidth" format="dimension" />
+        <attr name="CCBRadius" format="dimension" />
+        <attr name="CCBSmallSolidColor" format="color" />
+        <attr name="CCBSmallStrokeColor" format="color" />
+        <attr name="CCBSmallStrokeWidth" format="dimension" />
+        <attr name="CCBSmallRadius" format="dimension" />
+        <attr name="CCBProcessColor" format="color" />
+        <attr name="CCBProcessWidth" format="dimension" />
+        <attr name="CCBTextColor" format="color" />
+        <attr name="CCBTextSize" format="dimension" />
     </declare-styleable>
 
     <declare-styleable name="HorizontalProgressBar">
-        <attr name="HPBBackgroundColor" format="color"/>
-        <attr name="HPBProgressColor" format="color"/>
-        <attr name="HPBTextColor" format="color"/>
+        <attr name="HPBBackgroundColor" format="color" />
+        <attr name="HPBProgressColor" format="color" />
+        <attr name="HPBTextColor" format="color" />
+    </declare-styleable>
+
+    <declare-styleable name="HorseRaceLamp">
+        <attr name="HRScrollSpeed" format="integer" />
+        <attr name="HRScrollLeft" format="boolean" />
+        <attr name="HRScrollRepeat" format="boolean" />
+        <attr name="HRScrollAutoPlay" format="boolean" />
+        <attr name="HRTextContent" format="string" />
+        <attr name="HRTextColor" format="color|dimension" />
+        <attr name="HRTextSize" format="dimension" />
+        <attr name="HRTextPaddingTop" format="dimension" />
+        <attr name="HRTextPaddingBottom" format="dimension" />
+        <attr name="HRTextAlign" format="enum">
+            <enum name="left" value="0" />
+            <enum name="center" value="1" />
+            <enum name="right" value="2" />
+        </attr>
+
     </declare-styleable>
 </resources>
