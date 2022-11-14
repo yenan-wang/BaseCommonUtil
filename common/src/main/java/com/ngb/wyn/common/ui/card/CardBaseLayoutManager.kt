@@ -16,6 +16,8 @@ import com.ngb.wyn.common.utils.LogUtil
 
 abstract class CardBaseLayoutManager @JvmOverloads constructor(
     private val context: Context,
+    private val isLoopScroll: Boolean,      //是否循环滚动
+    private val isUseRollerEffect: Boolean, //是否使用滚筒效果
     @RecyclerView.Orientation private val orientation: Int = RecyclerView.HORIZONTAL
 ) : RecyclerView.LayoutManager() {
 
@@ -42,12 +44,14 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
     private var hasScrollX = 0  //水平方向已经滑动了距离
     private var startX = 0       //水平方向起始摆放位置，距离父容器左侧的距离
     private var totalWidth = 0  //item的总宽度
+    private var canScrollX = true //是否可以水平滑动
 
     //垂直方向参数
     private var intervalY = 0   //垂直方向item堆叠间距
     private var hasScrollY = 0  //垂直方向已经滑动了距离
     private var startY = 0       //垂直方向起始摆放位置，距离父容器顶部的距离
     private var totalHeight = 0 //item的总高度
+    private var canScrollY = true //是否可以垂直滑动
 
 
     companion object {
@@ -106,8 +110,9 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
             startX = width / 2 - itemWidth / 2
             //非异形屏计算间距
             intervalX = (width - DimenUtils.dp2px(context, 82.67f)) / 4
-            //计算列表可见item数量，计算方式是 可用宽度，除以间距（即(getHorizontalSpace() / intervalX)），这里多做了一步，即向上取整
-            visibleCount = (getHorizontalSpace() + intervalX - 1) / intervalX
+            //计算列表可见item数量，visibleCount即初始化时父容器里最多摆放item的数量
+            //计算方式是 可用宽度，除以间距（即(getHorizontalSpace() / intervalX)）
+            visibleCount = getHorizontalSpace() / intervalX
             printLog(
                 "onLayoutChildren, startX:$startX, width:$width, itemWidth:$itemWidth, " +
                         "intervalX:$intervalX, visibleCount:$visibleCount"
@@ -181,12 +186,27 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
                     removeAndRecycleView(it, recycler) //告诉recycler，回收该view
                     hasAttachedItem.put(pos, false)    //标记为detach的，即未被attached
                 } else {
+                    val scrollX = if (isUseRollerEffect) {
+                        val leftBaseLine = -visibleCount / 2 * intervalX
+                        val rightBaseLine = visibleCount / 2 * intervalX
+                        printLog("scrollHorizontallyBy, leftBaseLine:$leftBaseLine, rightBaseLine:$rightBaseLine")
+                        val distanceToCenter = viewOriginalLocation.left - hasScrollX - startX
+                        if (distanceToCenter < leftBaseLine) {
+                            hasScrollX + 2 * (distanceToCenter - leftBaseLine)
+                        } else if (distanceToCenter > rightBaseLine) {
+                            hasScrollX + 2 * (distanceToCenter - rightBaseLine)
+                        } else {
+                            hasScrollX
+                        }
+                    } else {
+                        hasScrollX
+                    }
                     //不需要回收的，直接摆放到最新的位置上
                     layoutDecoratedWithMargins(
                         it,
-                        viewOriginalLocation.left - hasScrollX,
+                        viewOriginalLocation.left - scrollX,
                         viewOriginalLocation.top,
-                        viewOriginalLocation.right - hasScrollX,
+                        viewOriginalLocation.right - scrollX,
                         viewOriginalLocation.bottom
                     )
                     //标记已经attached
@@ -231,11 +251,11 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
     }
 
     override fun canScrollHorizontally(): Boolean {
-        return orientation == RecyclerView.HORIZONTAL
+        return orientation == RecyclerView.HORIZONTAL && canScrollX
     }
 
     override fun canScrollVertically(): Boolean {
-        return orientation == RecyclerView.VERTICAL
+        return orientation == RecyclerView.VERTICAL && canScrollY
     }
 
     override fun smoothScrollToPosition(
@@ -266,6 +286,14 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
 
     fun getOrientation(): Int {
         return orientation
+    }
+
+    fun setCanScrollX(canScroll:Boolean) {
+        canScrollX = canScroll
+    }
+
+    fun setCanScrollY(canScroll:Boolean) {
+        canScrollY = canScroll
     }
 
     /**

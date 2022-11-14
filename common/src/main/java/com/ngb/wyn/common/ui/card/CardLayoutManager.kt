@@ -4,7 +4,11 @@ import android.content.Context
 import android.view.View
 import kotlin.math.abs
 
-class CardLayoutManager(context: Context) : CardBaseLayoutManager(context) {
+class CardLayoutManager(
+    private val context: Context,
+    private val isLoopScroll: Boolean = false,
+    private val isUseRollerEffect: Boolean = false
+) : CardBaseLayoutManager(context, isLoopScroll, isUseRollerEffect) {
 
     override fun handleView(position: Int, view: View, moveDistanceToCenter: Int) {
         printLog("handleView, pos:$position, moveDistanceToCenter:$moveDistanceToCenter")
