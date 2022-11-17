@@ -7,10 +7,12 @@ import android.util.SparseBooleanArray
 import android.view.View
 import android.view.animation.AccelerateInterpolator
 import android.view.animation.Interpolator
+import androidx.annotation.IntRange
 import androidx.core.util.isEmpty
 import androidx.core.util.set
 import androidx.recyclerview.widget.LinearSmoothScroller
 import androidx.recyclerview.widget.RecyclerView
+import com.ngb.wyn.common.BuildConfig
 import com.ngb.wyn.common.utils.DimenUtils
 import com.ngb.wyn.common.utils.LogUtil
 
@@ -42,6 +44,7 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
     //水平方向参数
     private var intervalX = 0   //水平方向item堆叠间距
     private var hasScrollX = 0  //水平方向已经滑动了距离
+    private var newHasScrollX = 0  //循环滚动时，新块水平方向已经滑动了距离
     private var startX = 0       //水平方向起始摆放位置，距离父容器左侧的距离
     private var totalWidth = 0  //item的总宽度
     private var canScrollX = true //是否可以水平滑动
@@ -49,6 +52,7 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
     //垂直方向参数
     private var intervalY = 0   //垂直方向item堆叠间距
     private var hasScrollY = 0  //垂直方向已经滑动了距离
+    private var newHasScrollY = 0  //循环滚动时，新块水平方向已经滑动了距离
     private var startY = 0       //垂直方向起始摆放位置，距离父容器顶部的距离
     private var totalHeight = 0 //item的总高度
     private var canScrollY = true //是否可以垂直滑动
@@ -56,6 +60,10 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
 
     companion object {
         const val TAG = "CardLayoutManager"
+
+        protected const val IN_NO_AREA = 0
+        protected const val IN_FIRST_AREA = 1
+        protected const val IN_SECOND_AREA = 2
     }
 
     override fun generateDefaultLayoutParams(): RecyclerView.LayoutParams {
@@ -85,7 +93,12 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
             val firstPos = if (isNeedStartFromZero) {
                 isNeedStartFromZero = false  //使用完需要重新置为false
                 hasScrollX = 0
-                0
+                //当开启循环时，由于默认将第一位摆在正中间，所以需要将左侧空白处填满，且必须在第0个填充之前添加，否则getChild时，获取第一个可见view的位置就不对了。
+                if (isLoopScroll) {
+                    0 - visibleCount / 2
+                } else {
+                    0
+                }
             } else {
                 //必须在剥离前获取，否则一旦剥离，childCount就变成0了
                 val firstView = getChildAt(0)
@@ -109,10 +122,11 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
             //确保默认情况下，首张的起始位置放置于ViewGroup容器的中间位置
             startX = width / 2 - itemWidth / 2
             //非异形屏计算间距
-            intervalX = (width - DimenUtils.dp2px(context, 82.67f)) / 4
+            intervalX = (getHorizontalSpace() - DimenUtils.dp2px(context, 82.67f)) / 4
             //计算列表可见item数量，visibleCount即初始化时父容器里最多摆放item的数量
             //计算方式是 可用宽度，除以间距（即(getHorizontalSpace() / intervalX)）
             visibleCount = getHorizontalSpace() / intervalX
+            //checkVisibleCountHorizontal()
             printLog(
                 "onLayoutChildren, startX:$startX, width:$width, itemWidth:$itemWidth, " +
                         "intervalX:$intervalX, visibleCount:$visibleCount"
@@ -136,24 +150,22 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
                 totalWidth = offsetX.coerceAtLeast(getHorizontalSpace())
 
                 //2、摆放item
-                val visibleArea = getVisibleAreaHorizontal()
                 //给endPos加一个判定范围
-                /*val endPos = if((firstPos + visibleCount) > itemCount) {
-                    itemCount
+                val endPos = if (isLoopScroll) {
+                    firstPos + itemCount   //循环时，往后循环itemCount次就好了
                 } else {
-                    firstPos + visibleCount
-                }*/
-                val endPos = itemCount
+                    itemCount
+                }
                 printLog("onLayoutChildren, firstPos:$firstPos, endPos:$endPos")
                 //从屏幕内第一个item的位置开始添加
                 for (i in firstPos until endPos) {
-                    insertView(i, visibleArea, _recycler)
+                    insertView(i, _recycler)
                 }
             } else if (orientation == RecyclerView.VERTICAL) {
                 printLog("学着自己写。")
                 //跟水平方向类似。
             }
-        }
+        } ?: printLog("onLayoutChildren, recycler is null and meaningless.")
     }
 
     override fun scrollHorizontallyBy(
@@ -174,7 +186,6 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
 
         //然后做两个步骤，回收已滑出屏幕可见区域外的，补充滑到屏幕可见区域内却没有添加到该区域内的view
         //1、回收不可见区域内的item
-        val visibleArea = getVisibleAreaHorizontal()
         //这里倒序，是因为每回收一个(removeAndRecycleView())，childCount会减少一个，为了能准确获取对应位置上的view，所以倒序
         for (i in childCount - 1 downTo 0) {
             val view = getChildAt(i)
@@ -182,36 +193,12 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
                 val pos = getPosition(it)
                 val viewOriginalLocation = itemOriginalLocation[pos]
                 //如果当前该view的位置不在当前可见区域内，则需要回收
-                if (!Rect.intersects(viewOriginalLocation, visibleArea)) {
+                val visibleAreaPair = isInVisibleArea(viewOriginalLocation)
+                if (!visibleAreaPair.first) {
                     removeAndRecycleView(it, recycler) //告诉recycler，回收该view
                     hasAttachedItem.put(pos, false)    //标记为detach的，即未被attached
                 } else {
-                    val scrollX = if (isUseRollerEffect) {
-                        val leftBaseLine = -visibleCount / 2 * intervalX
-                        val rightBaseLine = visibleCount / 2 * intervalX
-                        printLog("scrollHorizontallyBy, leftBaseLine:$leftBaseLine, rightBaseLine:$rightBaseLine")
-                        val distanceToCenter = viewOriginalLocation.left - hasScrollX - startX
-                        if (distanceToCenter < leftBaseLine) {
-                            hasScrollX + 2 * (distanceToCenter - leftBaseLine)
-                        } else if (distanceToCenter > rightBaseLine) {
-                            hasScrollX + 2 * (distanceToCenter - rightBaseLine)
-                        } else {
-                            hasScrollX
-                        }
-                    } else {
-                        hasScrollX
-                    }
-                    //不需要回收的，直接摆放到最新的位置上
-                    layoutDecoratedWithMargins(
-                        it,
-                        viewOriginalLocation.left - scrollX,
-                        viewOriginalLocation.top,
-                        viewOriginalLocation.right - scrollX,
-                        viewOriginalLocation.bottom
-                    )
-                    //标记已经attached
-                    hasAttachedItem.put(pos, true)
-                    handleView(pos, it, viewOriginalLocation.left - hasScrollX - startX)
+                    putInList(it, pos, viewOriginalLocation, visibleAreaPair)
                 }
             }
         }
@@ -223,8 +210,14 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
             val firstView = getChildAt(0)
             firstView?.let {
                 val minPos = getPosition(it)
-                for (i in minPos until itemCount) {
-                    insertView(i, visibleArea, recycler)
+                //循环滚动时，往后找itemCount个view，否则找到底就可以了
+                val endPos = if (isLoopScroll) {
+                    minPos + itemCount
+                } else {
+                    itemCount
+                }
+                for (i in minPos until endPos) {
+                    insertView(i, recycler)
                 }
             }
         }
@@ -234,8 +227,14 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
             val lastView = getChildAt(childCount - 1)
             lastView?.let {
                 val maxPos = getPosition(it)
-                for (i in maxPos downTo 0) {
-                    insertView(i, visibleArea, recycler, true)
+                //循环滚动时，往前找itemCount个view，否则找到头就可以了
+                val endPos = if (isLoopScroll) {
+                    maxPos - itemCount
+                } else {
+                    0
+                }
+                for (i in maxPos downTo endPos) {
+                    insertView(i, recycler, true)
                 }
             }
         }
@@ -247,6 +246,7 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
         recycler: RecyclerView.Recycler?,
         state: RecyclerView.State?
     ): Int {
+        //todo for support vertical
         return super.scrollVerticallyBy(dy, recycler, state)
     }
 
@@ -275,6 +275,44 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
         onCompletedListener?.completed(state)
     }
 
+    /**
+     * 设置本类中的日志开关
+     * 只有debug环境配置生效，非debug环境无法打开
+     */
+    fun setLogSwitch(isOpen: Boolean) {
+        logSwitch = if (BuildConfig.DEBUG) {
+            isOpen
+        } else {
+            false
+        }
+    }
+
+    /**
+     * intervalX是有可能作为除数的，除数不能为0， 所以限制从1开始
+     */
+    //暂时设置无效
+    fun setIntervalX(@IntRange(from = 1) intervalX: Int) {
+        this.intervalX = intervalX
+    }
+
+    /**
+     * intervalY是有可能作为除数的，除数不能为0， 所以限制从1开始
+     */
+    //暂时设置无效
+    fun setIntervalY(@IntRange(from = 1) intervalY: Int) {
+        this.intervalY = intervalY
+    }
+
+    /**
+     * 最少也得有一个可见，否则，列表显示无意义
+     * 注意，这个visibleCount在真正使用时，会进行判断，当父容器显示的长度允许能显示的长度大于visibleCount时，才生效
+     * 否则计算会以父容器一次最多显示的个数为visibleCount， 超出的个数在屏幕外，意义
+     */
+    //暂时设置无效
+    fun setVisibleCount(@IntRange(from = 1) visibleCount: Int) {
+        this.visibleCount = visibleCount
+    }
+
     //当列表全部重新update时，需要设置为true
     fun setNeedStartFromZero() {
         isNeedStartFromZero = true
@@ -288,11 +326,11 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
         return orientation
     }
 
-    fun setCanScrollX(canScroll:Boolean) {
+    fun setCanScrollX(canScroll: Boolean) {
         canScrollX = canScroll
     }
 
-    fun setCanScrollY(canScroll:Boolean) {
+    fun setCanScrollY(canScroll: Boolean) {
         canScrollY = canScroll
     }
 
@@ -353,6 +391,24 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
         return view?.let { getPosition(it) } ?: 0
     }
 
+    fun getLastVisiblePosition(): Int {
+        if (childCount <= 0) {
+            return 0
+        }
+        val view = getChildAt(childCount - 1)
+        return view?.let { getPosition(it) } ?: (itemCount - 1)
+    }
+
+    /**
+     * 获取view绘制层级顺序
+     */
+    fun getChildDrawingOrderCenter(): Int {
+        val centerPos = getCenterPosition()
+        val firstPos = getFirstVisiblePosition()
+        printLog("getChildDrawingOrderCenter, centerPos:$centerPos, firstPos:$firstPos, itemCount:$itemCount")
+        return (centerPos - firstPos).takeIf { it >= 0 } ?: let { centerPos + itemCount - firstPos }
+    }
+
     fun getCenterPosition(): Int {
         if (orientation == RecyclerView.HORIZONTAL) {
             if (intervalX < 1) {
@@ -362,8 +418,10 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
             val more = hasScrollX % intervalX
             if (more > intervalX * 0.5f) {
                 pos++
+            } else if (more < intervalX * -0.5f) {
+                pos--
             }
-            return pos
+            return dealPos(pos)
         } else {
             if (intervalY < 1) {
                 return 0
@@ -372,8 +430,10 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
             val more = hasScrollY % intervalY
             if (more > intervalY * 0.5f) {
                 pos++
+            } else if (more < intervalY * -0.5f) {
+                pos--
             }
-            return pos
+            return dealPos(pos)
         }
     }
 
@@ -402,9 +462,36 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
         return itemOriginalLocation[position]
     }
 
+    //是否使用循环滚动效果
+    protected fun canLoopScroll(): Boolean {
+        return isLoopScroll
+    }
+
+    //是否使用滚筒效果
+    protected fun canUseRollerEffect(): Boolean {
+        return isUseRollerEffect
+    }
+
+    //处理循环滚动时，超出0 ~ itemCount - 1范围外的position
+    protected fun dealPos(position: Int): Int {
+        val dealPos = if (position >= 0) {
+            position % itemCount
+        } else {
+            val absPos = ((-position - 1) % itemCount)
+            itemCount - 1 - absPos
+        }
+        printLog("dealPos:$dealPos")
+        return dealPos
+    }
+
     //获取水平方向可以绘制view区域的宽度
     protected fun getHorizontalSpace(): Int {
         return width - paddingLeft - paddingRight
+    }
+
+    //获取垂直方向可以绘制view区域的高度
+    protected fun getVerticalSpace(): Int {
+        return height - paddingTop - paddingBottom
     }
 
     /**
@@ -422,13 +509,80 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
      *
      * 计算完毕！
      */
-    protected fun getVisibleAreaHorizontal(): Rect {
-        return Rect(
-            paddingLeft + hasScrollX,
-            paddingTop,
-            width - paddingRight + hasScrollX,
-            height - paddingBottom
-        )
+    protected fun getVisibleAreaHorizontal(): Array<Rect> {
+        val rectArray = Array(2) {
+            Rect(
+                paddingLeft + hasScrollX,
+                paddingTop,
+                width - paddingRight + hasScrollX,
+                height - paddingBottom
+            )
+        }
+
+        val firstArray = rectArray[0]
+        val secondArray = rectArray[1]
+
+        return if (isLoopScroll) {
+            val headLeftBaseLine = -((visibleCount / 2) + 1) * intervalX
+            val headRightBaseLine = (visibleCount / 2) * intervalX
+
+            val bottomLeftBaseLine = (itemCount - ((visibleCount / 2) + 1)) * intervalX
+            val bottomRightBaseLine = (itemCount + (visibleCount / 2)) * intervalX
+            printLog("getVisibleAreaHorizontal, hasScrollX:$hasScrollX, headLeftBaseLine:$headLeftBaseLine, headRightBaseLine:$headRightBaseLine, bottomLeftBaseLine:$bottomLeftBaseLine, bottomRightBaseLine:$bottomRightBaseLine")
+            if (hasScrollX <= headLeftBaseLine) {
+                printLog("getVisibleAreaHorizontal, 1")
+                hasScrollX = (itemCount - 1 - (visibleCount / 2)) * intervalX
+                newHasScrollX = 0
+                firstArray.left = paddingLeft + startX + hasScrollX
+                firstArray.right = width - paddingRight + hasScrollX
+                secondArray.setEmpty()
+            } else if (hasScrollX in (headLeftBaseLine + 1) until headRightBaseLine) {
+                printLog("getVisibleAreaHorizontal, 2")
+                val more = hasScrollX - headRightBaseLine  //这里more一定是负数
+                newHasScrollX =
+                    more + ((itemCount - 1) * intervalX) + ((visibleCount / 2 + 1) * intervalX)
+                firstArray.left =
+                    paddingLeft + startX    //等同于 firstItemLocation.left，即第一个item originalLocation的left值
+                secondArray.left = paddingLeft + startX + totalWidth + more
+                secondArray.right = paddingLeft + startX + totalWidth
+            } else if (hasScrollX in headRightBaseLine..bottomLeftBaseLine) {
+                printLog("getVisibleAreaHorizontal, 3")
+                secondArray.setEmpty()
+            } else if (hasScrollX in (bottomLeftBaseLine + 1) until bottomRightBaseLine) {
+                printLog("getVisibleAreaHorizontal, 4")
+                val more = hasScrollX - bottomLeftBaseLine  //这里的more一定为负数
+                newHasScrollX = more - (visibleCount / 2 + 1) * intervalX
+                firstArray.right =
+                    paddingLeft + startX + totalWidth  //等同于 lastItemLocation.right，即最后一个item originalLocation的right值
+                secondArray.left = paddingLeft + startX
+                secondArray.right = paddingLeft + startX + more
+            } else if (hasScrollX >= bottomRightBaseLine) {
+                printLog("getVisibleAreaHorizontal, 5")
+                hasScrollX = (visibleCount / 2) * intervalX
+                newHasScrollX = 0
+                firstArray.left = paddingLeft + hasScrollX
+                firstArray.right = width - paddingRight + hasScrollX
+                secondArray.setEmpty()
+            }
+            printLog("getVisibleAreaHorizontal, rectArray[0]: ${rectArray[0]}, rectArray[1]:${rectArray[1]}")
+            rectArray
+        } else {
+            secondArray.setEmpty()
+            rectArray
+        }
+    }
+
+    protected fun getVisibleAreaVertical(): Array<Rect> {
+        val rectArray = Array(2) {
+            Rect(
+                paddingLeft,
+                paddingTop + hasScrollY,
+                width - paddingRight,
+                height - paddingBottom + hasScrollY
+            )
+        }
+        //todo to support vertical
+        return rectArray
     }
 
     /**
@@ -440,16 +594,19 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
      */
     private fun insertView(
         position: Int,
-        visibleArea: Rect,
         recycler: RecyclerView.Recycler,
         isAddFirst: Boolean = false
     ) {
+        //转换pos
+        val pos = dealPos(position)
         //获取item原始位置
-        val originalLocation = itemOriginalLocation[position]
+        val originalLocation = itemOriginalLocation[pos]
         //如果item的位置刚好在屏幕可见区域内，且未attach的，就添加上
-        if (Rect.intersects(visibleArea, originalLocation) && !hasAttachedItem.get(position)) {
+        val visibleAreaPair = isInVisibleArea(originalLocation)
+        printLog("insertView, position:$position, pos:$pos, visibleAreaPair:$visibleAreaPair")
+        if (visibleAreaPair.first && !hasAttachedItem.get(pos)) {
             //从recycler中申请该位置的view
-            val view = recycler.getViewForPosition(position)
+            val view = recycler.getViewForPosition(pos)
             //将该位置的view添加到容器中
             if (isAddFirst) {
                 addView(view, 0)
@@ -459,18 +616,72 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
             //同样，要先测量该view
             measureChildWithMargins(view, 0, 0)
             //然后才能知道该将它放在什么位置，即放在原位置移动了hasScrollX距离的位置
-            layoutDecoratedWithMargins(
-                view,
-                originalLocation.left - hasScrollX,
-                originalLocation.top,
-                originalLocation.right - hasScrollX,
-                originalLocation.bottom
-            )
-            //将其标记为attach
-            hasAttachedItem.put(position, true)
-            //就可以处理view的一些属性了
-            handleView(position, view, originalLocation.left - hasScrollX - startX)
+            putInList(view, pos, originalLocation, visibleAreaPair)
         }
+    }
+
+    private fun putInList(
+        view: View,
+        pos: Int,
+        viewOriginalLocation: Rect,
+        visibleAreaPair: Pair<Boolean, Int>
+    ) {
+        if (orientation == RecyclerView.HORIZONTAL) {
+            putInListHorizontal(view, pos, viewOriginalLocation, visibleAreaPair)
+        } else {
+            putInListVertical(view, pos, viewOriginalLocation, visibleAreaPair)
+        }
+    }
+
+    private fun putInListHorizontal(
+        view: View,
+        pos: Int,
+        viewOriginalLocation: Rect,
+        visibleAreaPair: Pair<Boolean, Int>
+    ) {
+
+        val hasScroll = if (isLoopScroll && visibleAreaPair.second == IN_SECOND_AREA) {
+            newHasScrollX   //只在开启循环滚动，且处于second区域内可见的view使用newHasScrollX，否则仍旧使用hasScrollX
+        } else {
+            hasScrollX
+        }
+        val scrollX = if (isUseRollerEffect) {
+            val leftBaseLine = -visibleCount / 2 * intervalX
+            val rightBaseLine = visibleCount / 2 * intervalX
+            printLog("putInList, leftBaseLine:$leftBaseLine, rightBaseLine:$rightBaseLine")
+            val distanceToCenter = viewOriginalLocation.left - hasScroll - startX
+            if (distanceToCenter < leftBaseLine) {
+                hasScroll + 2 * (distanceToCenter - leftBaseLine)
+            } else if (distanceToCenter > rightBaseLine) {
+                hasScroll + 2 * (distanceToCenter - rightBaseLine)
+            } else {
+                hasScroll
+            }
+        } else {
+            hasScroll
+        }
+        printLog("putInList, scrollX:$scrollX")
+
+        //不需要回收的，直接摆放到最新的位置上
+        layoutDecoratedWithMargins(
+            view,
+            viewOriginalLocation.left - scrollX,
+            viewOriginalLocation.top,
+            viewOriginalLocation.right - scrollX,
+            viewOriginalLocation.bottom
+        )
+        //标记已经attached
+        hasAttachedItem.put(pos, true)
+        handleView(pos, view, viewOriginalLocation.left - hasScroll - startX)
+    }
+
+    private fun putInListVertical(
+        view: View,
+        pos: Int,
+        viewOriginalLocation: Rect,
+        visibleAreaPair: Pair<Boolean, Int>
+    ) {
+        //TODO for support vertical
     }
 
     private fun getDistanceFromTargetToCenter(targetPosition: Int): Int {
@@ -479,29 +690,113 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
             return 0
         }
 
-        //兜底pos，防止越界
-        val pos = if (targetPosition < 0) {
-            0
-        } else if (targetPosition > itemCount - 1) {
-            itemCount - 1
+        //if (isLoopScroll) {
+        val targetPos = dealPos(targetPosition)
+        val currentCenterPos = getCenterPosition()
+        val minDuration =
+            (targetPos - currentCenterPos).coerceAtMost(currentCenterPos + itemCount - targetPos)
+
+        val distance = if (orientation == RecyclerView.HORIZONTAL) {
+            var more = hasScrollX % intervalX
+            if (more > intervalX / 2) {
+                more -= intervalX
+            } else if (more < -intervalX / 2) {
+                more += intervalX
+            }
+            minDuration * intervalX - more
         } else {
-            targetPosition
+            var more = hasScrollY % intervalY
+            if (more > intervalY / 2) {
+                more -= intervalY
+            } else if (more < -intervalY / 2) {
+                more += intervalY
+            }
+            minDuration * intervalY - more
+        }
+        printLog("getDistanceFromTargetToCenter, targetPos:$targetPos, currentCenterPos:$currentCenterPos, minDuration:$minDuration, distance：$distance.")
+        return distance
+        //}
+
+        /*//兜底pos，防止越界
+        val pos = when {
+            targetPosition < 0 -> {
+                0
+            }
+            targetPosition > itemCount - 1 -> {
+                itemCount - 1
+            }
+            else -> {
+                targetPosition
+            }
         }
         printLog("getDistanceFromTargetToCenter, pos:$pos")
 
         val target = itemOriginalLocation.get(pos)?.left
         val first = itemOriginalLocation.get(0)?.left
-        /*
+        *//*
         val currentCenterPos = getCenterPositionHorizontal()
         val current = itemOriginalLocation.get(currentCenterPos)
-        */
+        *//*
         val distance = if (target != null && first != null) {
             -hasScrollX + target - first // target - current - (hasScrollX % (interval / 2))也行
         } else {
             0
         }
-        printLog("getDistanceFromTargetToCenter, distance:$distance")
-        return distance
+        printLog("getDistanceFromTargetToCenter, horizontal distance:$distance")
+        return distance*/
+    }
+
+    private fun checkVisibleCountHorizontal() {
+        defaultVisibleCount = getHorizontalSpace() / (if (orientation == RecyclerView.HORIZONTAL) {
+            intervalX
+        } else {
+            intervalY
+        })
+        printLog("checkVisibleCountHorizontal, visibleCount:$visibleCount, defaultVisibleCount:$defaultVisibleCount")
+        //取两者较小的那一个
+        visibleCount = if (visibleCount > 0) {
+            defaultVisibleCount.coerceAtMost(visibleCount)
+        } else {
+            defaultVisibleCount
+        }
+        printLog("checkVisibleCountHorizontal, visibleCount:$visibleCount")
+    }
+
+    private fun checkVisibleCountVertical() {
+        //todo for support vertical
+    }
+
+    private fun isInVisibleArea(viewOriginalLocation: Rect): Pair<Boolean, Int> {
+        val visibleAreas = getVisibleAreaHorizontal()
+        val firstVisibleArea = visibleAreas[0]
+        val secondVisibleArea = visibleAreas[1]
+        val isIntersect = if (isLoopScroll) {
+            val isInSecondArea = !secondVisibleArea.isEmpty && Rect.intersects(
+                secondVisibleArea,
+                viewOriginalLocation
+            )
+            if (isInSecondArea) {
+                printLog("isInVisibleArea, loopScroll, second.")
+                Pair(true, IN_SECOND_AREA)
+            } else if (Rect.intersects(firstVisibleArea, viewOriginalLocation)) {
+                printLog("isInVisibleArea, loopScroll, first.")
+                Pair(true, IN_FIRST_AREA)
+            } else {
+                printLog("isInVisibleArea, loopScroll, no.")
+                Pair(false, IN_NO_AREA)
+            }
+        } else {
+            val isInVisibleArea = Rect.intersects(firstVisibleArea, viewOriginalLocation)
+            if (isInVisibleArea) {
+                printLog("isInVisibleArea, no loopScroll, first.")
+                Pair(true, IN_FIRST_AREA)
+            } else {
+                printLog("isInVisibleArea, no loopScroll, no.")
+                Pair(false, IN_NO_AREA)
+            }
+        }
+        printLog("isInVisibleArea, isIntersect:$isIntersect")
+        return isIntersect
     }
 
     /**

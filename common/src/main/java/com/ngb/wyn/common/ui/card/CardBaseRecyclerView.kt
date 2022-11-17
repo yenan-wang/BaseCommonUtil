@@ -9,6 +9,10 @@ open class CardBaseRecyclerView @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null
 ) : RecyclerView(context, attrs) {
 
+    companion object {
+        const val TAG = "CardBaseRecyclerView"
+    }
+
     init {
         //打开允许自定义绘制层级
         isChildrenDrawingOrderEnabled = true
@@ -22,8 +26,7 @@ open class CardBaseRecyclerView @JvmOverloads constructor(
     }
 
     override fun getChildDrawingOrder(childCount: Int, i: Int): Int {
-        val centerPos =
-            getRecyclerViewLayoutManager().getCenterPosition() - getRecyclerViewLayoutManager().getFirstVisiblePosition()
+        val centerPos = getRecyclerViewLayoutManager().getChildDrawingOrderCenter()
         val order = if (i < centerPos) {
             i
         } else if (i > centerPos) {
@@ -49,5 +52,13 @@ open class CardBaseRecyclerView @JvmOverloads constructor(
         pos: Int = getRecyclerViewLayoutManager().getCenterPosition()
     ) {
         getRecyclerViewLayoutManager().scrollToPositionCenterSmooth(this, pos, duration)
+    }
+
+    fun canScrollHorizontal(canScroll: Boolean) {
+        getRecyclerViewLayoutManager().setCanScrollX(canScroll)
+    }
+
+    fun canScrollVertical(canScroll: Boolean) {
+        getRecyclerViewLayoutManager().setCanScrollY(canScroll)
     }
 }

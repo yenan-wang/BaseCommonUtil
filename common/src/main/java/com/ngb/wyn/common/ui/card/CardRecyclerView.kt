@@ -10,6 +10,11 @@ class CardRecyclerView(context: Context, attrs: AttributeSet? = null) :
 
     private var isNeedLocation = false //是否需要松手自动定位
 
+    companion object {
+        const val TAG = "CardRecyclerView"
+        private const val POST_TIME = 400 //定位动画时间
+    }
+
     init {
         val friction = ViewConfiguration.getScrollFriction() * 2.5F //摩擦系数为2.5
     }
@@ -18,7 +23,8 @@ class CardRecyclerView(context: Context, attrs: AttributeSet? = null) :
         super.onScrollStateChanged(state)
         if (state == SCROLL_STATE_IDLE && isNeedLocation) {
             isNeedLocation = false //重置
-            scrollToPositionCenterSmooth(400)
+            //使得当前C位的item定位到正中间
+            scrollToPositionCenterSmooth(duration = POST_TIME)
         }
     }
 
