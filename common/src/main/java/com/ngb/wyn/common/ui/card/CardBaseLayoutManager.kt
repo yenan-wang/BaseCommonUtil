@@ -15,6 +15,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.ngb.wyn.common.BuildConfig
 import com.ngb.wyn.common.utils.DimenUtils
 import com.ngb.wyn.common.utils.LogUtil
+import kotlin.math.abs
 
 abstract class CardBaseLayoutManager @JvmOverloads constructor(
     private val context: Context,
@@ -191,6 +192,7 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
             val view = getChildAt(i)
             view?.let {
                 val pos = getPosition(it)
+                printLog("scrollHorizontallyBy, pos:$pos")
                 val viewOriginalLocation = itemOriginalLocation[pos]
                 //如果当前该view的位置不在当前可见区域内，则需要回收
                 val visibleAreaPair = isInVisibleArea(viewOriginalLocation)
@@ -370,11 +372,11 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
         recyclerView: RecyclerView,
         targetPosition: Int
     ) {
-        printLog("scrollToPositionCenterSmooth, targetPosition:$targetPosition")
+        printLog("scrollToPositionCenter, targetPosition:$targetPosition")
         val distance = getDistanceFromTargetToCenter(targetPosition)
 
         if (distance != 0) {
-            printLog("scrollToPositionCenterSmooth, distance:$distance")
+            printLog("scrollToPositionCenter, distance:$distance")
             if (orientation == RecyclerView.HORIZONTAL) {
                 recyclerView.scrollBy(distance, 0)
             } else if (orientation == RecyclerView.VERTICAL) {
@@ -648,7 +650,7 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
         val scrollX = if (isUseRollerEffect) {
             val leftBaseLine = -visibleCount / 2 * intervalX
             val rightBaseLine = visibleCount / 2 * intervalX
-            printLog("putInList, leftBaseLine:$leftBaseLine, rightBaseLine:$rightBaseLine")
+            printLog("putInListHorizontal, leftBaseLine:$leftBaseLine, rightBaseLine:$rightBaseLine")
             val distanceToCenter = viewOriginalLocation.left - hasScroll - startX
             if (distanceToCenter < leftBaseLine) {
                 hasScroll + 2 * (distanceToCenter - leftBaseLine)
@@ -660,7 +662,7 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
         } else {
             hasScroll
         }
-        printLog("putInList, scrollX:$scrollX")
+        printLog("putInListHorizontal, scrollX:$scrollX")
 
         //不需要回收的，直接摆放到最新的位置上
         layoutDecoratedWithMargins(
@@ -693,9 +695,13 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
         //if (isLoopScroll) {
         val targetPos = dealPos(targetPosition)
         val currentCenterPos = getCenterPosition()
-        val minDuration =
-            (targetPos - currentCenterPos).coerceAtMost(currentCenterPos + itemCount - targetPos)
-
+        val positiveDuration = targetPos - currentCenterPos
+        val negativeDuration = targetPos - (currentCenterPos + itemCount)
+        val minDuration = if (abs(positiveDuration) < abs(negativeDuration)) {
+            positiveDuration
+        } else {
+            negativeDuration
+        }
         val distance = if (orientation == RecyclerView.HORIZONTAL) {
             var more = hasScrollX % intervalX
             if (more > intervalX / 2) {
