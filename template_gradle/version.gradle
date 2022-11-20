@@ -9,7 +9,7 @@ ext.buildConfig = buildConfig
 def version = [:]
 version.glide = "4.11.0"
 version.ngb_wyn_base_util = "1.0.0.1"
-version.ngb_wyn_base_util_loacl = "1.0.0.1-LOCAL"
+version.ngb_wyn_base_util_loacl = "0.0.1-LOCAL"
 
 def deps = [:]
 deps.glide = "com.github.bumptech.glide:glide:$version.glide"

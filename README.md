@@ -41,7 +41,7 @@ https://raw.githubusercontent.com/yenan-wang/BaseCommonUtil/master
 
 ###2.2、引入依赖
 `dependencies {
-    implementation com.ngb.wyn.base_util:common:1.0.0.1
+    implementation com.ngb.wyn.base_util:common:x.x.x
 }`
 
 ###2.3、项目中即可使用
