@@ -7,6 +7,7 @@ import android.util.SparseBooleanArray
 import android.view.View
 import android.view.animation.AccelerateInterpolator
 import android.view.animation.Interpolator
+import androidx.annotation.FloatRange
 import androidx.annotation.IntRange
 import androidx.core.util.isEmpty
 import androidx.core.util.set
@@ -21,6 +22,7 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
     private val context: Context,
     private val isLoopScroll: Boolean,      //是否循环滚动
     private val isUseRollerEffect: Boolean, //是否使用滚筒效果
+    private var isUseFlipDelayEffect: Boolean, //是否使用延迟翻转特效
     @RecyclerView.Orientation private val orientation: Int = RecyclerView.HORIZONTAL
 ) : RecyclerView.LayoutManager() {
 
@@ -35,6 +37,9 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
     //每次回调onLayoutChild时是否需要从第0个位置开始
     private var isNeedStartFromZero = false
     private var defaultVisibleCount = 0
+    private var maxFlipDelaySpeed: Int = 0 //最大步进距离，用于限制延迟翻转特效下，快速滑动的速度，0表示不限制，仅延迟翻转特效开启时有用
+    private var lastDirection = DEFAULT_DIRECTION
+    private var isChangeDirection = false
 
     //一次最多可以看见几个item
     private var visibleCount = 0  //这里默认为0，实际使用的时候，一定要大于1
@@ -46,6 +51,14 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
     private var intervalX = 0   //水平方向item堆叠间距
     private var hasScrollX = 0  //水平方向已经滑动了距离
     private var newHasScrollX = 0  //循环滚动时，新块水平方向已经滑动了距离
+    private var flipDelayLeftHasScrollX = 0 //翻转动效下左侧第二层级移动的距离
+    private var flipDelayRightHasScrollX = 0 //翻转动效下右侧第二层级移动的距离
+    private var flipDelayLeftView: View? = null //翻转动效下左侧第二层级的view
+    private var flipDelayRightView: View? = null //翻转动效下右侧第二层级的view
+    private var maxAngle = DEFAULT_MAX_ANGLE //翻转最大角度
+    private var minAngle = DEFAULT_MIN_ANGLE //翻转最小角度
+    private var currentDx = 0   //当前滑动的步进长度
+    private var isNeedExecuteRotation = false   //是否需要执行翻转动画
     private var startX = 0       //水平方向起始摆放位置，距离父容器左侧的距离
     private var totalWidth = 0  //item的总宽度
     private var canScrollX = true //是否可以水平滑动
@@ -65,6 +78,14 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
         protected const val IN_NO_AREA = 0
         protected const val IN_FIRST_AREA = 1
         protected const val IN_SECOND_AREA = 2
+
+        private const val DEFAULT_DIRECTION = 0 //初始状态
+        private const val RIGHT_DIRECTION = 1   //手指右滑
+        private const val LEFT_DIRECTION = 2    //手指左滑
+        private const val DEFAULT_MAX_ANGLE = 23f //默认最大旋转角度
+        private const val DEFAULT_MIN_ANGLE = 0f //默认最小旋转角度
+        private const val COEFFICIENT_ANGLE_VARIATION_RANGE = 2    //角度变化范围系数
+        private const val COEFFICIENT_ANGLE_RECOVERY = 4    //角度恢复系数
     }
 
     override fun generateDefaultLayoutParams(): RecyclerView.LayoutParams {
@@ -181,7 +202,29 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
         }
 
         //本次移动的距离， 默认是dx。注意，这里是手指向右滑，item列表会滑动到左侧，dx是负数，手指向左滑，item列表会滑动到右侧，dx是负数
-        val scrollDx = scrollXRangeController(dx, hasScrollX)
+        currentDx = dx
+        //记录用户滑动途中是否有更改方向，dx大于零，手指向左滑动，列表右滑；反之相反
+        if (currentDx > 0) {
+            if (lastDirection == RIGHT_DIRECTION) {
+                isChangeDirection = true
+            }
+            lastDirection = LEFT_DIRECTION
+        } else if (currentDx < 0) {
+            if (lastDirection == LEFT_DIRECTION) {
+                isChangeDirection = true
+            }
+            lastDirection = RIGHT_DIRECTION
+        }
+
+        val consumeDx = scrollXRangeController(dx, hasScrollX)
+        val scrollDx = if (isUseFlipDelayEffect
+            && maxFlipDelaySpeed != 0
+            && (abs(consumeDx) > maxFlipDelaySpeed)
+        ) {
+            maxFlipDelaySpeed * (consumeDx / abs(consumeDx))
+        } else {
+            consumeDx
+        }
         //先把此次移动的距离加上
         hasScrollX += scrollDx
 
@@ -210,37 +253,51 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
         if (scrollDx >= 0) {
             //那么就从屏幕可见区域内第一个位置开始，直到最后一个item，依次插入
             val firstView = getChildAt(0)
-            firstView?.let {
-                val minPos = getPosition(it)
-                //循环滚动时，往后找itemCount个view，否则找到底就可以了
-                val endPos = if (isLoopScroll) {
-                    minPos + itemCount
-                } else {
-                    itemCount
-                }
-                for (i in minPos until endPos) {
-                    insertView(i, recycler)
-                }
+            val minPos = firstView?.let { getPosition(it) } ?: findFirstPosInArea()
+            //循环滚动时，往后找itemCount个view，否则找到底就可以了
+            val endPos = if (isLoopScroll) {
+                minPos + itemCount
+            } else {
+                itemCount
+            }
+            for (i in minPos until endPos) {
+                insertView(i, recycler)
             }
         }
         //手指右滑，item列表左移
         else {
             //那么从屏幕可见区域内最后一个位置开始，直到第0个，依次插入
             val lastView = getChildAt(childCount - 1)
-            lastView?.let {
-                val maxPos = getPosition(it)
-                //循环滚动时，往前找itemCount个view，否则找到头就可以了
-                val endPos = if (isLoopScroll) {
-                    maxPos - itemCount
-                } else {
-                    0
-                }
-                for (i in maxPos downTo endPos) {
-                    insertView(i, recycler, true)
-                }
+            val maxPos = lastView?.let { getPosition(it) } ?: findLastPosInArea()
+            //循环滚动时，往前找itemCount个view，否则找到头就可以了
+            val endPos = if (isLoopScroll) {
+                maxPos - itemCount
+            } else {
+                0
+            }
+            for (i in maxPos downTo endPos) {
+                insertView(i, recycler, true)
             }
         }
-        return scrollDx
+        return consumeDx
+    }
+
+    override fun onScrollStateChanged(state: Int) {
+        super.onScrollStateChanged(state)
+        when (state) {
+            RecyclerView.SCROLL_STATE_IDLE -> {
+                //某些时候，停在某些尴尬的位置，导致无法在停止时，角度无法恢复至最小角度，所以这里加个兜底处理
+                if (!isNeedExecuteRotation) {
+                    rotationAngle()
+                }
+                isNeedExecuteRotation = false
+                isChangeDirection = false
+                lastDirection = DEFAULT_DIRECTION
+            }
+            RecyclerView.SCROLL_STATE_DRAGGING -> {
+                isNeedExecuteRotation = true
+            }
+        }
     }
 
     override fun scrollVerticallyBy(
@@ -313,6 +370,33 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
     //暂时设置无效
     fun setVisibleCount(@IntRange(from = 1) visibleCount: Int) {
         this.visibleCount = visibleCount
+    }
+
+    //设置使用延迟翻转动效
+    fun setIsUseFlipDelayEffect(isUseFlipDelayEffect: Boolean) {
+        this.isUseFlipDelayEffect = isUseFlipDelayEffect
+    }
+
+    //是否使用延迟翻转动效
+    fun canUseFlipDelayEffect(): Boolean {
+        return isUseFlipDelayEffect
+    }
+
+    //最大步进距离，用于限制延迟翻转特效下，快速滑动的速度，0表示不限制，仅延迟翻转特效开启时有用
+    fun setMaxFlipDelaySpeed(maxFlipDelaySpeed: Int) {
+        this.maxFlipDelaySpeed = maxFlipDelaySpeed
+    }
+
+    @JvmOverloads
+    fun setAngelRange(
+        @FloatRange(from = 1.0, to = 360.0) maxAngle: Float,
+        @FloatRange(from = 0.0) minAngle: Float = DEFAULT_MIN_ANGLE
+    ) {
+        if (maxAngle < minAngle) {
+            return
+        }
+        this.maxAngle = maxAngle
+        this.minAngle = minAngle
     }
 
     //当列表全部重新update时，需要设置为true
@@ -476,6 +560,9 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
 
     //处理循环滚动时，超出0 ~ itemCount - 1范围外的position
     protected fun dealPos(position: Int): Int {
+        if (itemCount == 0) { //一般不会进入此条件
+            return 0
+        }
         val dealPos = if (position >= 0) {
             position % itemCount
         } else {
@@ -647,6 +734,93 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
         } else {
             hasScrollX
         }
+
+        val delayScrollX = if (isUseFlipDelayEffect) {
+            if (visibleCount < 5) {
+                //可见数量小于5时，不支持翻转延迟效果，因为小于5时，滚筒动效和翻转延迟动效会有冲突
+                this.isUseFlipDelayEffect = false
+                printLog("putInListHorizontal, visibleCount:$visibleCount, not support while visible count smaller than five.")
+                hasScroll
+            } else {
+                //此时距离中心itemRect.left的距离
+                val distanceToCenter = viewOriginalLocation.left - hasScroll - startX
+                printLog("putInListHorizontal, pos:$pos, distanceToCenter:$distanceToCenter, intervalX:$intervalX")
+                //记录移动到距离中心点距离为-intervalX的view，是中心左侧的第二层级的view
+                if (distanceToCenter in -intervalX until 0) {
+                    if (flipDelayLeftView != view) {
+                        flipDelayLeftView = view
+                        flipDelayLeftHasScrollX = (pos + 1) * intervalX //记录当前的位置
+                        printLog("putInListHorizontal, pos left:$pos, flipDelayLeftHasScrollX:$flipDelayLeftHasScrollX")
+                    }
+                }
+                if (distanceToCenter in 1..intervalX) {
+                    if (flipDelayRightView != view) {
+                        flipDelayRightView = view
+                        flipDelayRightHasScrollX = (pos - 1) * intervalX //记录当前的位置
+                        printLog("putInListHorizontal, pos right:$pos, flipDelayRightHasScrollX:$flipDelayRightHasScrollX")
+                    }
+                }
+                //临界值
+                val criticalValue = (intervalX / 2 + (intervalX - itemWidth / 2))
+                //val criticalValue = ((intervalX / 2 +(intervalX - itemWidth / 2)) * (89f / 96f)).toInt() // 在不使用旋转角度时使用
+                printLog("putInListHorizontal, criticalValue:$criticalValue, pos:$pos, view:${view.hashCode()}, flipDelayLeftView:${flipDelayLeftView.hashCode()}, flipDelayRightView:${flipDelayRightView.hashCode()}")
+                //只有位于中心两侧第二层级上的view，才需要延迟位移
+                if (flipDelayRightView == view) {
+                    //在 criticalValue ~ intervalX 范围内，静止不动
+                    if (distanceToCenter in criticalValue until intervalX) {
+                        printLog("putInListHorizontal, f1 pos:$pos")
+                        flipDelayRightHasScrollX
+                    }
+                    //在 0 ~ criticalValue 范围内加速赶上
+                    else if (distanceToCenter in 1 until criticalValue) {
+                        val newFlipDelayRightHasScrollX =
+                            flipDelayRightHasScrollX + (criticalValue - distanceToCenter) * 2 //加速赶上
+                        printLog(
+                            "putInListHorizontal, f2 pos:$pos, distanceToCenter:$distanceToCenter, flipDelayRightHasScrollX:$flipDelayRightHasScrollX, " +
+                                    "newFlipDelayRightHasScrollX:$newFlipDelayRightHasScrollX, hasScroll:$hasScroll"
+                        )
+                        //如果还没赶上，就使用加速的距离，否则就使用原速距离
+                        if (newFlipDelayRightHasScrollX < hasScroll) {
+                            newFlipDelayRightHasScrollX
+                        } else {
+                            hasScroll
+                        }
+                    } else {
+                        printLog("putInListHorizontal, f3 pos:$pos")
+                        hasScroll
+                    }
+                } else if (flipDelayLeftView == view) {
+                    //在 -intervalX ~ criticalValue 范围内静止不动
+                    if (distanceToCenter in (-intervalX + 1)..-criticalValue) {
+                        printLog("putInListHorizontal, f4 pos:$pos")
+                        flipDelayLeftHasScrollX
+                    }
+                    //在 -criticalValue ~ 0 范围内加速赶上
+                    else if (distanceToCenter in -criticalValue + 1 until 0) {
+                        val newFlipDelayLeftHasScrollX =
+                            flipDelayLeftHasScrollX + (-criticalValue - distanceToCenter) * 2 //加速赶上
+                        printLog(
+                            "putInListHorizontal, f5 pos:$pos, distanceToCenter:$distanceToCenter, flipDelayLeftHasScrollX:$flipDelayLeftHasScrollX, " +
+                                    "newFlipDelayLeftHasScrollX:$newFlipDelayLeftHasScrollX, hasScroll:$hasScroll"
+                        )
+                        //如果还没赶上，就使用加速的距离，否则就使用原速距离
+                        if (newFlipDelayLeftHasScrollX > hasScroll) {
+                            newFlipDelayLeftHasScrollX
+                        } else {
+                            hasScroll
+                        }
+                    } else {
+                        printLog("putInListHorizontal, f6 pos:$pos")
+                        hasScroll
+                    }
+                } else {
+                    printLog("putInListHorizontal, f7 pos:$pos")
+                    hasScroll
+                }
+            }
+        } else {
+            hasScroll
+        }
         val scrollX = if (isUseRollerEffect) {
             val leftBaseLine = -visibleCount / 2 * intervalX
             val rightBaseLine = visibleCount / 2 * intervalX
@@ -657,10 +831,10 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
             } else if (distanceToCenter > rightBaseLine) {
                 hasScroll + 2 * (distanceToCenter - rightBaseLine)
             } else {
-                hasScroll
+                delayScrollX
             }
         } else {
-            hasScroll
+            delayScrollX
         }
         printLog("putInListHorizontal, scrollX:$scrollX")
 
@@ -674,7 +848,7 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
         )
         //标记已经attached
         hasAttachedItem.put(pos, true)
-        handleView(pos, view, viewOriginalLocation.left - hasScroll - startX)
+        handleView(pos, view, viewOriginalLocation.left - hasScroll - startX, hasScrollX)
     }
 
     private fun putInListVertical(
@@ -752,6 +926,64 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
         return distance*/
     }
 
+    private fun findFirstPosInArea(): Int {
+        val rectArray = getVisibleAreaHorizontal()
+        val firstArray = rectArray[0]
+        val secondArray = rectArray[1]
+        when {
+            //列表右滑到队尾时，first是当前可见范围的队尾，second是进入可见范围的队头区域，从第一区域内找第一个
+            firstArray.right > secondArray.left -> {
+                for (i in 0 until itemOriginalLocation.size()) {
+                    if (isRectInArea(firstArray, itemOriginalLocation[i])) {
+                        return i
+                    }
+                }
+                return 0
+            }
+            //列表左滑到队头时，first是当前可见范围的队头，second是进入可见范围的队尾区域，从第二区域内找第一个
+            firstArray.right < secondArray.left -> {
+                for (i in 0 until itemOriginalLocation.size()) {
+                    if (isRectInArea(secondArray, itemOriginalLocation[i])) {
+                        return i
+                    }
+                }
+                return 0
+            }
+            else -> {
+                return 0
+            }
+        }
+    }
+
+    private fun findLastPosInArea(): Int {
+        val rectArray = getVisibleAreaHorizontal()
+        val firstArray = rectArray[0]
+        val secondArray = rectArray[1]
+        when {
+            //列表右滑到队尾时，first是当前可见范围的队尾，second是进入可见范围的队头区域，从第二区域内找最后一个
+            firstArray.right > secondArray.left -> {
+                for (i in itemOriginalLocation.size() - 1 downTo 0) {
+                    if (isRectInArea(secondArray, itemOriginalLocation[i])) {
+                        return i
+                    }
+                }
+                return itemCount - 1
+            }
+            //列表左滑到队头时，first是当前可见范围的队头，second是进入可见范围的队尾区域，从第二区域内找第一个
+            firstArray.right < secondArray.left -> {
+                for (i in itemOriginalLocation.size() - 1 downTo 0) {
+                    if (isRectInArea(firstArray, itemOriginalLocation[i])) {
+                        return i
+                    }
+                }
+                return itemCount - 1
+            }
+            else -> {
+                return itemCount - 1
+            }
+        }
+    }
+
     private fun checkVisibleCountHorizontal() {
         defaultVisibleCount = getHorizontalSpace() / (if (orientation == RecyclerView.HORIZONTAL) {
             intervalX
@@ -777,14 +1009,14 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
         val firstVisibleArea = visibleAreas[0]
         val secondVisibleArea = visibleAreas[1]
         val isIntersect = if (isLoopScroll) {
-            val isInSecondArea = !secondVisibleArea.isEmpty && Rect.intersects(
+            val isInSecondArea = !secondVisibleArea.isEmpty && isRectInArea(
                 secondVisibleArea,
                 viewOriginalLocation
             )
             if (isInSecondArea) {
                 printLog("isInVisibleArea, loopScroll, second.")
                 Pair(true, IN_SECOND_AREA)
-            } else if (Rect.intersects(firstVisibleArea, viewOriginalLocation)) {
+            } else if (isRectInArea(firstVisibleArea, viewOriginalLocation)) {
                 printLog("isInVisibleArea, loopScroll, first.")
                 Pair(true, IN_FIRST_AREA)
             } else {
@@ -792,7 +1024,7 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
                 Pair(false, IN_NO_AREA)
             }
         } else {
-            val isInVisibleArea = Rect.intersects(firstVisibleArea, viewOriginalLocation)
+            val isInVisibleArea = isRectInArea(firstVisibleArea, viewOriginalLocation)
             if (isInVisibleArea) {
                 printLog("isInVisibleArea, no loopScroll, first.")
                 Pair(true, IN_FIRST_AREA)
@@ -805,13 +1037,123 @@ abstract class CardBaseLayoutManager @JvmOverloads constructor(
         return isIntersect
     }
 
+    private fun isRectInArea(
+        rangeRect: Rect,
+        compareRect: Rect,
+        isNeedJudgeCenter: Boolean = true
+    ): Boolean {
+        val isIntersect = Rect.intersects(rangeRect, compareRect)
+        printLog("isRectInArea, isIntersect:$isIntersect, rangeRect:$rangeRect, compareRect:$compareRect")
+        return isIntersect
+        /*
+        return if (isNeedJudgeCenter) {
+            val midPointCoordinate = (compareRect.left + compareRect.right) / 2
+            val isInRange =
+                (midPointCoordinate >= rangeRect.left) && (midPointCoordinate <= rangeRect.right)
+            printLog("isRectInArea, isIntersect:$isIntersect, midPointCoordinate:$midPointCoordinate, isInRange:$isInRange")
+            isIntersect && isInRange
+        } else {
+            isIntersect
+        }
+        */
+    }
+
+    private fun rotationAngle() {
+        for (i in 0 until childCount) {
+            getChildAt(i)?.let {
+                if (it.rotationY != minAngle) {
+                    it.rotationY = minAngle
+                }
+            }
+        }
+    }
+
+    private fun getAngularRate(): Int {
+        return COEFFICIENT_ANGLE_RECOVERY * currentDx
+    }
+
+    protected open fun computeRotation(currentRotationY: Float, x: Int, hasScroll: Int): Float {
+        val modDouble = (abs(hasScroll) % (2 * intervalX))
+        val modSingle = (abs(hasScroll) % intervalX)
+        val modContinuity = if (modSingle == modDouble) {
+            modSingle
+        } else {
+            2 * intervalX - modDouble
+        }
+        //iss: 0 ~ (maxAngle * 2) ~ 0 ~ (maxAngle * 2) ~ 0
+        val iss = modSingle * (maxAngle / (intervalX / COEFFICIENT_ANGLE_VARIATION_RANGE))
+        printLog("computeRotation, currentRotationY:$currentRotationY, isChangeDirection:$isChangeDirection, currentDx:$currentDx, iss:$iss")
+        val newAngle = if (isNeedExecuteRotation) {
+            val coverRotation = if (currentDx > 0f) {
+                if (currentRotationY < maxAngle) {
+                    if (isChangeDirection) {
+                        (currentRotationY + getAngularRate()).coerceAtMost(maxAngle)
+                    } else {
+                        iss.coerceAtMost(maxAngle)
+                    }
+                } else {
+                    maxAngle
+                }
+            } else {
+                if (currentRotationY > -maxAngle) {
+                    if (isChangeDirection) {
+                        (currentRotationY + getAngularRate()).coerceAtLeast(-maxAngle)
+                    } else {
+                        (iss - COEFFICIENT_ANGLE_VARIATION_RANGE * maxAngle).coerceAtLeast(-maxAngle)
+                    }
+                } else {
+                    -maxAngle
+                }
+            }
+            if (abs(coverRotation) == maxAngle) {
+                isChangeDirection = false
+            }
+            coverRotation
+        } else {
+            val recoverRotation = if (currentDx > 0) {
+                if (currentRotationY > minAngle) {
+                    (currentRotationY - getAngularRate()).coerceAtLeast(minAngle)
+                } else if (currentRotationY < minAngle) {
+                    (currentRotationY + getAngularRate()).coerceAtMost(minAngle)
+                } else {
+                    minAngle
+                }
+            } else {
+                if (currentRotationY > minAngle) {
+                    (currentRotationY + getAngularRate()).coerceAtLeast(minAngle)
+                } else if (currentRotationY < minAngle) {
+                    (currentRotationY - getAngularRate()).coerceAtMost(minAngle)
+                } else {
+                    minAngle
+                }
+            }
+            if (recoverRotation == minAngle) {
+                isChangeDirection = false
+            }
+            recoverRotation
+        }
+        return newAngle
+    }
+
     /**
      * 对view进行视觉上的处理，如缩放，透明度等
      * @param position             当前itemView在所有itemList中的位置
      * @param view                 要进行变换的view
      * @param moveDistanceToCenter 该距离是当前该view的左侧距离原始位置第0个位置view的左侧之间的距离
+     * @param hasScroll            当前已经滑动过的总距离
      */
-    abstract fun handleView(position: Int, view: View, moveDistanceToCenter: Int)
+    protected open fun handleView(
+        position: Int,
+        view: View,
+        moveDistanceToCenter: Int,
+        hasScroll: Int
+    ) {
+        if (isUseFlipDelayEffect) {
+            val rotation = computeRotation(view.rotationY, moveDistanceToCenter, hasScroll)
+            printLog("handleView, pos:$position, rotation:$rotation")
+            view.rotationY = rotation
+        }
+    }
 
     //如果横向滑动，你需要对该函数进行覆写，以实现列表左右两侧可滑动的范围，默认dx
     protected open fun scrollXRangeController(dx: Int, hasScrollX: Int): Int {

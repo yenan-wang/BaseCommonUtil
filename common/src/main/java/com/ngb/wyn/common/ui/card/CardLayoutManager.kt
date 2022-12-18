@@ -7,10 +7,12 @@ import kotlin.math.abs
 class CardLayoutManager @JvmOverloads constructor(
     private val context: Context,
     private val isLoopScroll: Boolean = false,
-    private val isUseRollerEffect: Boolean = false
-) : CardBaseLayoutManager(context, isLoopScroll, isUseRollerEffect) {
+    private val isUseRollerEffect: Boolean = false,
+    private val isUseFlipDelayEffect: Boolean = false,
+) : CardBaseLayoutManager(context, isLoopScroll, isUseRollerEffect, isUseFlipDelayEffect) {
 
-    override fun handleView(position: Int, view: View, moveDistanceToCenter: Int) {
+    override fun handleView(position: Int, view: View, moveDistanceToCenter: Int, hasScroll: Int ) {
+        super.handleView(position, view, moveDistanceToCenter, hasScroll)
         printLog("handleView, pos:$position, moveDistanceToCenter:$moveDistanceToCenter")
         val scaleRadio = computeScale(moveDistanceToCenter)
         view.scaleX = scaleRadio
