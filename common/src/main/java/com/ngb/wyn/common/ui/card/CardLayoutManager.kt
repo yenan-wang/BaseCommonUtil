@@ -7,9 +7,8 @@ import kotlin.math.abs
 class CardLayoutManager @JvmOverloads constructor(
     private val context: Context,
     private val isLoopScroll: Boolean = false,
-    private val isUseRollerEffect: Boolean = false,
-    private val isUseFlipDelayEffect: Boolean = false,
-) : CardBaseLayoutManager(context, isLoopScroll, isUseRollerEffect, isUseFlipDelayEffect) {
+    private val isUseRollerEffect: Boolean = false
+) : CardBaseLayoutManager(context, isLoopScroll, isUseRollerEffect) {
 
     override fun handleView(position: Int, view: View, moveDistanceToCenter: Int, hasScroll: Int ) {
         super.handleView(position, view, moveDistanceToCenter, hasScroll)
