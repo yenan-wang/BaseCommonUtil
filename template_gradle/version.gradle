@@ -7,13 +7,13 @@ buildConfig.versionName = "1.0"
 ext.buildConfig = buildConfig
 
 def version = [:]
-version.glide = "4.11.0"
+version.glide = "4.13.2"
 version.ngb_wyn_base_util = "1.0.0.1"
 version.ngb_wyn_base_util_loacl = "0.0.1-LOCAL"
 
 def deps = [:]
 deps.glide = "com.github.bumptech.glide:glide:$version.glide"
-deps.glide_webp = "com.zlc.glide:webpdecoder:2.0.$version.glide"
+deps.glide_webp = "com.github.zjupure:webpdecoder:2.3.$version.glide"
 deps.ngb_wyn_base_util = "com.ngb.wyn.base_util:common:$version.ngb_wyn_base_util"
 deps.ngb_wyn_base_util_loacl = "com.ngb.wyn.base_util:common:$version.ngb_wyn_base_util_loacl"
 
